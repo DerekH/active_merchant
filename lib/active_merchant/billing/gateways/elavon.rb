@@ -47,9 +47,10 @@ module ActiveMerchant #:nodoc:
         :refund => 'CCRETURN',
         :authorize => 'CCAUTHONLY',
         :capture => 'CCFORCE',
-        :void => 'CCDELETE',
+        :void => 'CCVOID',
         :store => 'CCGETTOKEN',
         :update => 'CCUPDATETOKEN',
+        :query_transaction => 'TXNQUERY'
       }
 
       # Initialize the Gateway
@@ -143,7 +144,7 @@ module ActiveMerchant #:nodoc:
       #
       # ==== Parameters
       #
-      # * <tt>authorization</tt> - The authorization returned from the previous request.
+      # * <tt>identification</tt> - The identification returned from the previous request.
       def void(identification, options = {})
         form = {}
         add_txn_id(form, identification)
@@ -170,6 +171,18 @@ module ActiveMerchant #:nodoc:
         add_customer_data(form, options)
         add_test_mode(form, options)
         commit(:credit, money, form)
+      end
+
+      # Query a Completed Transaction
+      #
+      # ==== Parameters
+      # * <tt>identification</tt> -- The ID of the original transaction against which the refund is being issued.
+      # * <tt>options</tt>
+      def query_transaction(identification, options = {})
+        form = {}
+        add_txn_id(form, identification)
+        add_test_mode(form, options)
+        commit(:query_transaction, nil, form)
       end
 
       def verify(credit_card, options = {})
@@ -220,15 +233,27 @@ module ActiveMerchant #:nodoc:
       end
 
       def add_creditcard(form, creditcard)
-        form[:card_number] = creditcard.number
-        form[:exp_date] = expdate(creditcard)
+        if creditcard.is_a? ActiveMerchant::Billing::CreditCard
+          form[:card_number] = creditcard.number
+          form[:exp_date] = expdate(creditcard)
 
-        if creditcard.verification_value?
-          add_verification_value(form, creditcard)
+          if creditcard.verification_value?
+            add_verification_value(form, creditcard)
+          else
+            form[:cvv2cvc2] = ''
+            form[:cvv2cvc2_indicator] = '9'
+          end
+
+          form[:first_name] = creditcard.first_name.to_s.slice(0, 20)
+          form[:last_name] = creditcard.last_name.to_s.slice(0, 30)
+        else
+          form[:track_data] = creditcard[:track_data] if creditcard[:track_data].present?
+          form[:encrypted_track1_data] = creditcard[:encrypted_track1_data]
+          form[:encrypted_track2_data] = creditcard[:encrypted_track2_data]
+          form[:vendor_id] = creditcard[:vendor_id]
+          form[:vm_mobile_source] = creditcard[:vm_mobile_source]
+          form[:ksn] = creditcard[:ksn]
         end
-
-        form[:first_name] = creditcard.first_name.to_s.slice(0, 20)
-        form[:last_name] = creditcard.last_name.to_s.slice(0, 30)
       end
 
       def add_token(form, token)
@@ -335,10 +360,10 @@ module ActiveMerchant #:nodoc:
 
       def parse(msg)
         resp = {}
-        msg.split(self.delimiter).collect{|li|
-            key, value = li.split("=")
-            resp[key.to_s.strip.gsub(/^ssl_/, '')] = value.to_s.strip
-          }
+        msg.split("\n").collect do |li|
+          key, value = li.split("=")
+          resp[key.to_s.strip.gsub(/^ssl_/, '')] = value.to_s.strip
+        end
         resp
       end
 
